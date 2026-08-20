@@ -158,7 +158,7 @@ fn main() -> anyhow::Result<()> {
         // Each module fetches its own data and reports whether its content
         // changed. Weather (and the header clock) refresh on the slow 30-minute
         // cadence (`slow`); S-Bahn + calendar poll every minute.
-        let slow = tick % WEATHER_EVERY == 0;
+        let slow = tick.is_multiple_of(WEATHER_EVERY);
         let mut need_render = tick == 0;
         {
             let mut ctx = UpdateCtx {
