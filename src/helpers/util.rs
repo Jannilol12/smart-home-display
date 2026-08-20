@@ -37,11 +37,7 @@ pub fn read_body(client: &mut EspHttpConnection) -> anyhow::Result<String> {
 /// Configure the C library timezone to Europe/Berlin (POSIX TZ with DST rules).
 pub fn configure_timezone() {
     unsafe {
-        esp_idf_svc::sys::setenv(
-            c"TZ".as_ptr(),
-            c"CET-1CEST,M3.5.0,M10.5.0/3".as_ptr(),
-            1,
-        );
+        esp_idf_svc::sys::setenv(c"TZ".as_ptr(), c"CET-1CEST,M3.5.0,M10.5.0/3".as_ptr(), 1);
         esp_idf_svc::sys::tzset();
     }
 }
