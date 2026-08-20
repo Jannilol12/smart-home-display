@@ -1,0 +1,36 @@
+[package]
+name = "smart-home-display"
+version = "0.1.0"
+edition = "2021"
+resolver = "2"
+
+[dependencies]
+log = "0.4"
+esp-idf-svc = { version = "0.52", features = ["std", "binstart"] }
+anyhow = "1.0"
+serde = { version = "1.0", features = ["derive"] }
+serde_json = "1.0"
+embedded-graphics = "0.8.2"
+epd-waveshare = "0.6.0"
+embedded-hal = "1.0.0"
+
+[build-dependencies]
+embuild = { version = "0.33", features = ["espidf"] }
+
+# For fine tuning these settings, please refer to https://doc.rust-lang.org/cargo/reference/profiles.html
+[profile.dev]
+# The default debug profile is too slow and too big for resource-constrained devices.
+# Always build with some optimizations enabled.
+opt-level = 0
+
+[profile.release]
+codegen-units = 1     # LLVM can perform better optimizations using a single thread
+debug         = 2     # prefer slower builds but better debugging experience
+lto           = 'fat'
+opt-level     = 0
+
+[profile.dev.package.serde_json]
+opt-level = 0
+
+[profile.release.package.serde_json]
+opt-level = 0
