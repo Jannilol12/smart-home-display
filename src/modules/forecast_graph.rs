@@ -9,9 +9,9 @@ use embedded_graphics::{
 };
 use epd_waveshare::{color::Color, epd7in5_v2::Display7in5};
 
+use super::{pull_weather, DisplayModule, UpdateCtx};
 use crate::helpers::draw_panel;
 use crate::helpers::weather_data::WeatherData;
-use super::{pull_weather, DisplayModule, UpdateCtx};
 
 /// Top-right block: a compact 24-hour chart combining the temperature trend
 /// (line), rain probability (outline bars) and rain amount (filled bars).
@@ -43,7 +43,11 @@ impl DisplayModule for ForecastGraphModule {
     }
 
     fn render(&self, display: &mut Display7in5) -> Result<(), Infallible> {
-        let inner = draw_panel(display, self.bounds, "NEXT 24 HOURS  (line \u{00b0}C - bars rain% - fill mm)")?;
+        let inner = draw_panel(
+            display,
+            self.bounds,
+            "NEXT 24 HOURS  (line \u{00b0}C - bars rain% - fill mm)",
+        )?;
         let ix = inner.top_left.x;
         let iy = inner.top_left.y;
         let iw = inner.size.width as i32;
@@ -113,8 +117,7 @@ impl DisplayModule for ForecastGraphModule {
             top_left,
         )
         .draw(display)?;
-        Line::new(Point::new(px0, sep), Point::new(px1, sep))
-            .draw_styled(&stroke1, display)?;
+        Line::new(Point::new(px0, sep), Point::new(px1, sep)).draw_styled(&stroke1, display)?;
 
         let pts: Vec<Point> = slice
             .iter()
@@ -145,7 +148,8 @@ impl DisplayModule for ForecastGraphModule {
         } else {
             "100%".to_string()
         };
-        Text::with_text_style(&scale_label, Point::new(ix, sep + 1), small, top_left).draw(display)?;
+        Text::with_text_style(&scale_label, Point::new(ix, sep + 1), small, top_left)
+            .draw(display)?;
 
         let bar_w = (step * 0.6).max(3.0) as u32;
         for i in 0..n {
@@ -155,11 +159,8 @@ impl DisplayModule for ForecastGraphModule {
             if let Some(Some(p)) = probs.get(start + i) {
                 let ph = (*p as f32 / 100.0 * prec_h) as i32;
                 if ph > 0 {
-                    Rectangle::new(
-                        Point::new(bx, prec_bot - ph),
-                        Size::new(bar_w, ph as u32),
-                    )
-                    .draw_styled(&stroke1, display)?;
+                    Rectangle::new(Point::new(bx, prec_bot - ph), Size::new(bar_w, ph as u32))
+                        .draw_styled(&stroke1, display)?;
                 }
             }
 
@@ -169,11 +170,8 @@ impl DisplayModule for ForecastGraphModule {
                     let fw = (bar_w / 2).max(2);
                     let fx = cx - fw as i32 / 2;
                     if rh > 0 {
-                        Rectangle::new(
-                            Point::new(fx, prec_bot - rh),
-                            Size::new(fw, rh as u32),
-                        )
-                        .draw_styled(&fill, display)?;
+                        Rectangle::new(Point::new(fx, prec_bot - rh), Size::new(fw, rh as u32))
+                            .draw_styled(&fill, display)?;
                     }
                 }
             }
@@ -186,11 +184,8 @@ impl DisplayModule for ForecastGraphModule {
                 .get(start + i)
                 .and_then(|t| t.get(11..13))
                 .unwrap_or("--");
-            Line::new(
-                Point::new(cx, prec_bot),
-                Point::new(cx, prec_bot + 3),
-            )
-            .draw_styled(&stroke1, display)?;
+            Line::new(Point::new(cx, prec_bot), Point::new(cx, prec_bot + 3))
+                .draw_styled(&stroke1, display)?;
             Text::with_text_style(hh, Point::new(cx, prec_bot + 2), small, top_center)
                 .draw(display)?;
         }

@@ -12,10 +12,10 @@ use embedded_graphics::{
 };
 use epd_waveshare::{color::Color, epd7in5_v2::Display7in5};
 
+use super::{pull_weather, DisplayModule, UpdateCtx};
 use crate::helpers::icons::{self, IconKind};
 use crate::helpers::weather_data::{wmo_text, WeatherData};
 use crate::helpers::{compass, draw_panel, glyphs, hhmm};
-use super::{pull_weather, DisplayModule, UpdateCtx};
 
 /// Signature shared by every stat glyph in [`glyphs`].
 type Glyph = fn(&mut Display7in5, Point, u32) -> Result<(), Infallible>;
@@ -69,8 +69,7 @@ impl DisplayModule for CurrentWeatherModule {
             .build();
 
         let Some(data) = &self.data else {
-            Text::with_text_style("Loading...", Point::new(ix, iy + 20), mid, top)
-                .draw(display)?;
+            Text::with_text_style("Loading...", Point::new(ix, iy + 20), mid, top).draw(display)?;
             return Ok(());
         };
         let cur = data.current.clone().unwrap_or_default();

@@ -56,20 +56,32 @@ pub fn wind(display: &mut Display7in5, top_left: Point, size: u32) -> Result<(),
 
     Line::new(pt(x0, y + s * 0.32), pt(x + s * 0.60, y + s * 0.32))
         .draw_styled(&stroke(2), display)?;
-    Line::new(pt(x + s * 0.60, y + s * 0.32), pt(x + s * 0.72, y + s * 0.22))
-        .draw_styled(&stroke(2), display)?;
-    Line::new(pt(x + s * 0.72, y + s * 0.22), pt(x + s * 0.58, y + s * 0.14))
-        .draw_styled(&stroke(2), display)?;
+    Line::new(
+        pt(x + s * 0.60, y + s * 0.32),
+        pt(x + s * 0.72, y + s * 0.22),
+    )
+    .draw_styled(&stroke(2), display)?;
+    Line::new(
+        pt(x + s * 0.72, y + s * 0.22),
+        pt(x + s * 0.58, y + s * 0.14),
+    )
+    .draw_styled(&stroke(2), display)?;
 
     Line::new(pt(x0, y + s * 0.52), pt(x + s * 0.74, y + s * 0.52))
         .draw_styled(&stroke(2), display)?;
 
     Line::new(pt(x0, y + s * 0.72), pt(x + s * 0.55, y + s * 0.72))
         .draw_styled(&stroke(2), display)?;
-    Line::new(pt(x + s * 0.55, y + s * 0.72), pt(x + s * 0.67, y + s * 0.82))
-        .draw_styled(&stroke(2), display)?;
-    Line::new(pt(x + s * 0.67, y + s * 0.82), pt(x + s * 0.53, y + s * 0.90))
-        .draw_styled(&stroke(2), display)?;
+    Line::new(
+        pt(x + s * 0.55, y + s * 0.72),
+        pt(x + s * 0.67, y + s * 0.82),
+    )
+    .draw_styled(&stroke(2), display)?;
+    Line::new(
+        pt(x + s * 0.67, y + s * 0.82),
+        pt(x + s * 0.53, y + s * 0.90),
+    )
+    .draw_styled(&stroke(2), display)?;
     Ok(())
 }
 
@@ -91,10 +103,16 @@ pub fn rain(display: &mut Display7in5, top_left: Point, size: u32) -> Result<(),
     )
     .draw_styled(&fill(), display)?;
 
-    Line::new(pt(x + s * 0.36, y + s * 0.60), pt(x + s * 0.30, y + s * 0.82))
-        .draw_styled(&stroke(2), display)?;
-    Line::new(pt(x + s * 0.58, y + s * 0.60), pt(x + s * 0.52, y + s * 0.82))
-        .draw_styled(&stroke(2), display)?;
+    Line::new(
+        pt(x + s * 0.36, y + s * 0.60),
+        pt(x + s * 0.30, y + s * 0.82),
+    )
+    .draw_styled(&stroke(2), display)?;
+    Line::new(
+        pt(x + s * 0.58, y + s * 0.60),
+        pt(x + s * 0.52, y + s * 0.82),
+    )
+    .draw_styled(&stroke(2), display)?;
     Ok(())
 }
 
@@ -169,7 +187,11 @@ pub fn sunshine(display: &mut Display7in5, top_left: Point, size: u32) -> Result
 }
 
 /// Precipitation amount (mm): a droplet resting on a small puddle line.
-pub fn millimeters(display: &mut Display7in5, top_left: Point, size: u32) -> Result<(), Infallible> {
+pub fn millimeters(
+    display: &mut Display7in5,
+    top_left: Point,
+    size: u32,
+) -> Result<(), Infallible> {
     let s = size as f32;
     let x = top_left.x as f32;
     let y = top_left.y as f32;
@@ -179,8 +201,11 @@ pub fn millimeters(display: &mut Display7in5, top_left: Point, size: u32) -> Res
     Circle::with_center(pt(cx, cyc), (s * 0.52) as u32).draw_styled(&fill(), display)?;
     Triangle::new(pt(cx, y + s * 0.02), pt(cx - r, cyc), pt(cx + r, cyc))
         .draw_styled(&fill(), display)?;
-    Line::new(pt(x + s * 0.14, y + s * 0.92), pt(x + s * 0.86, y + s * 0.92))
-        .draw_styled(&stroke(2), display)?;
+    Line::new(
+        pt(x + s * 0.14, y + s * 0.92),
+        pt(x + s * 0.86, y + s * 0.92),
+    )
+    .draw_styled(&stroke(2), display)?;
     Ok(())
 }
 

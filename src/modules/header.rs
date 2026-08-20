@@ -10,8 +10,8 @@ use embedded_graphics::{
 };
 use epd_waveshare::{color::Color, epd7in5_v2::Display7in5};
 
-use crate::helpers::util;
 use super::{DisplayModule, UpdateCtx};
+use crate::helpers::util;
 
 /// Top bar showing the current date, time and the device IP address.
 pub struct HeaderModule {
@@ -78,15 +78,9 @@ impl DisplayModule for HeaderModule {
             .alignment(Alignment::Right)
             .build();
 
-        Text::with_text_style(&self.date, Point::new(tl.x + 10, mid_y), big, left)
+        Text::with_text_style(&self.date, Point::new(tl.x + 10, mid_y), big, left).draw(display)?;
+        Text::with_text_style(&self.time, Point::new(tl.x + w / 2, mid_y), big, center)
             .draw(display)?;
-        Text::with_text_style(
-            &self.time,
-            Point::new(tl.x + w / 2, mid_y),
-            big,
-            center,
-        )
-        .draw(display)?;
         Text::with_text_style(
             &format!("IP {}", self.ip),
             Point::new(tl.x + w - 10, mid_y + 2),

@@ -15,8 +15,8 @@ use log::error;
 
 use std::collections::{HashMap, HashSet};
 
-use crate::helpers::{draw_panel, truncate, util};
 use super::{DisplayModule, UpdateCtx};
+use crate::helpers::{draw_panel, truncate, util};
 
 const MAX_ROWS: usize = 6;
 
@@ -232,7 +232,10 @@ impl DisplayModule for DeparturesModule {
                 Err(e) => error!("   Plan request failed: {e:?}"),
             }
         }
-        let changes = match self.db_get(ctx.client, &format!("{}/fchg/{}", self.cfg.base, self.cfg.eva)) {
+        let changes = match self.db_get(
+            ctx.client,
+            &format!("{}/fchg/{}", self.cfg.base, self.cfg.eva),
+        ) {
             Ok(body) => body,
             Err(e) => {
                 error!("   Changes request failed: {e:?}");
@@ -328,8 +331,17 @@ impl DisplayModule for DeparturesModule {
             }
             if show_box {
                 let box_x = cluster_left + time_w + 8;
-                rounded_box(display, Point::new(box_x, ytop), Size::new(box_w, bh), &fill)?;
-                let text = if row.cancelled { "ausf." } else { row.actual.as_str() };
+                rounded_box(
+                    display,
+                    Point::new(box_x, ytop),
+                    Size::new(box_w, bh),
+                    &fill,
+                )?;
+                let text = if row.cancelled {
+                    "ausf."
+                } else {
+                    row.actual.as_str()
+                };
                 Text::with_text_style(
                     text,
                     Point::new(box_x + box_w as i32 / 2, vmid),

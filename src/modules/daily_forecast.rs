@@ -12,10 +12,10 @@ use embedded_graphics::{
 };
 use epd_waveshare::{color::Color, epd7in5_v2::Display7in5};
 
+use super::{pull_weather, DisplayModule, UpdateCtx};
 use crate::helpers::icons::{self, IconKind};
 use crate::helpers::weather_data::WeatherData;
 use crate::helpers::{draw_panel, glyphs, weekday};
-use super::{pull_weather, DisplayModule, UpdateCtx};
 
 /// Bottom-left block: the next three days at a glance.
 pub struct DailyForecastModule {
@@ -77,8 +77,7 @@ impl DisplayModule for DailyForecastModule {
             return Ok(());
         };
         let Some(daily) = &data.daily else {
-            Text::with_text_style("No data", Point::new(ix, iy + 20), mid, center)
-                .draw(display)?;
+            Text::with_text_style("No data", Point::new(ix, iy + 20), mid, center).draw(display)?;
             return Ok(());
         };
 
@@ -126,8 +125,13 @@ impl DisplayModule for DailyForecastModule {
             let mm = daily.precipitation_sum.get(idx).copied().unwrap_or(0.0);
             let gy1 = iy + 70;
             glyphs::rain(display, Point::new(cx0 + 8, gy1), 12)?;
-            Text::with_text_style(&format!("{}%", prob), Point::new(cx0 + 22, gy1 + 1), small, left)
-                .draw(display)?;
+            Text::with_text_style(
+                &format!("{}%", prob),
+                Point::new(cx0 + 22, gy1 + 1),
+                small,
+                left,
+            )
+            .draw(display)?;
             glyphs::millimeters(display, Point::new(cx0 + 60, gy1), 12)?;
             Text::with_text_style(
                 &format!("{:.1}mm", mm),

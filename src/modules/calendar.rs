@@ -14,8 +14,8 @@ use esp_idf_svc::http::{client::EspHttpConnection, Method};
 use log::error;
 use serde::Deserialize;
 
-use crate::helpers::{draw_panel, month_abbr, truncate, util, weekday};
 use super::{DisplayModule, UpdateCtx};
+use crate::helpers::{draw_panel, month_abbr, truncate, util, weekday};
 
 const MAX_EVENTS: usize = 5;
 
@@ -100,7 +100,11 @@ impl CalendarModule {
             ("Content-Length", len.as_str()),
             ("Accept", "application/json"),
         ];
-        client.initiate_request(Method::Post, "https://oauth2.googleapis.com/token", &headers)?;
+        client.initiate_request(
+            Method::Post,
+            "https://oauth2.googleapis.com/token",
+            &headers,
+        )?;
         client.write_all(body.as_bytes())?;
         client.initiate_response()?;
         let resp = util::read_body(client)?;
