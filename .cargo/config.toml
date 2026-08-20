@@ -1,6 +1,12 @@
 [build]
 target = "xtensa-esp32-espidf"
 
+[net]
+# Use the system `git` binary to fetch git dependencies. Required because the
+# global `insteadOf` SSH rewrite isn't handled by cargo's built-in git client,
+# which otherwise breaks fetching the patched epd-waveshare crate.
+git-fetch-with-cli = true
+
 [target.'cfg(target_os = "espidf")']
 linker = "ldproxy"
 runner = "espflash flash --monitor"

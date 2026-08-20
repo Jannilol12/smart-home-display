@@ -2,3 +2,6 @@
 /.embuild
 /target
 /Cargo.lock
+
+# Local secrets (Wi-Fi + DB API credentials)
+/.secret
