@@ -42,12 +42,15 @@ impl HeaderModule {
 }
 
 impl DisplayModule for HeaderModule {
-    fn update(&mut self, ctx: &mut UpdateCtx) -> bool {
+    fn bounds(&self) -> Rectangle {
+        self.bounds
+    }
+
+    fn update(&mut self, _ctx: &mut UpdateCtx) -> bool {
         let (date, time) = util::local_datetime();
+        let changed = time != self.time || date != self.date;
         self.set_datetime(date, time);
-        // Re-render the clock on the slow 30-minute heartbeat; the device IP is
-        // set once at startup and rarely changes.
-        ctx.slow
+        changed
     }
 
     fn render(&self, display: &mut Display7in5) -> Result<(), Infallible> {

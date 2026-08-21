@@ -213,6 +213,10 @@ fn hhmm_db(stamp: &str) -> String {
 }
 
 impl DisplayModule for DeparturesModule {
+    fn bounds(&self) -> Rectangle {
+        self.bounds
+    }
+
     fn update(&mut self, ctx: &mut UpdateCtx) -> bool {
         // Planned timetable for the current and next hour, merged with the live
         // changes feed. Polled every tick; reports a change only when the board

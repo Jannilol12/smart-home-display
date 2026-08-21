@@ -32,6 +32,10 @@ impl ForecastGraphModule {
 }
 
 impl DisplayModule for ForecastGraphModule {
+    fn bounds(&self) -> Rectangle {
+        self.bounds
+    }
+
     fn update(&mut self, ctx: &mut UpdateCtx) -> bool {
         match pull_weather(ctx, &self.url) {
             Some(wd) => {

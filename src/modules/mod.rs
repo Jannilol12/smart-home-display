@@ -8,6 +8,7 @@ pub mod header;
 use core::convert::Infallible;
 use std::rc::Rc;
 
+use embedded_graphics::primitives::Rectangle;
 use epd_waveshare::epd7in5_v2::Display7in5;
 use esp_idf_svc::http::client::EspHttpConnection;
 use log::error;
@@ -36,6 +37,11 @@ pub struct UpdateCtx<'a> {
 /// composites every module and flushes the frame once.
 pub trait DisplayModule {
     fn render(&self, display: &mut Display7in5) -> Result<(), Infallible>;
+
+    /// The module's rectangle on the panel. The controller uses this to push a
+    /// partial refresh of just this block (byte-aligned to the panel's 8-pixel
+    /// column granularity) when only this module changed.
+    fn bounds(&self) -> Rectangle;
 
     /// Fetch fresh data and fold it into the module's internal state. Returns
     /// `true` when the visible content changed and the panel should be

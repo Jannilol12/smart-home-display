@@ -201,6 +201,10 @@ impl CalendarModule {
 }
 
 impl DisplayModule for CalendarModule {
+    fn bounds(&self) -> Rectangle {
+        self.bounds
+    }
+
     fn update(&mut self, ctx: &mut UpdateCtx) -> bool {
         if self.cfg.refresh_token.is_empty() {
             return false; // unconfigured: keep the static status set at construction

@@ -1,7 +1,7 @@
 //! Small monochrome stat glyphs (~14-16px) used to label the current-weather
 //! metrics with icons instead of words. Each function fills an `s` x `s` box
 //! anchored at `top_left`, drawn in the natural "black on white" convention
-//! (the controller inverts the framebuffer before flushing to the panel).
+//! (the panel uses natural polarity, so the framebuffer is flushed as-is).
 
 use core::convert::Infallible;
 use embedded_graphics::{

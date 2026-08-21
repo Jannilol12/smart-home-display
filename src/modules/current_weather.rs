@@ -38,6 +38,10 @@ impl CurrentWeatherModule {
 }
 
 impl DisplayModule for CurrentWeatherModule {
+    fn bounds(&self) -> Rectangle {
+        self.bounds
+    }
+
     fn update(&mut self, ctx: &mut UpdateCtx) -> bool {
         match pull_weather(ctx, &self.url) {
             Some(wd) => {

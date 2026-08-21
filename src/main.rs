@@ -106,6 +106,8 @@ fn main() -> anyhow::Result<()> {
     let http_config = HttpConfig {
         use_global_ca_store: true,
         crt_bundle_attach: Some(esp_idf_svc::sys::esp_crt_bundle_attach),
+        buffer_size: Some(4096),
+        buffer_size_tx: Some(4096),
         ..Default::default()
     };
     let mut client = EspHttpConnection::new(&http_config)?;
@@ -155,11 +157,9 @@ fn main() -> anyhow::Result<()> {
     info!("5. Entering main dashboard loop...");
     let mut tick: u32 = 0;
     loop {
-        // Each module fetches its own data and reports whether its content
-        // changed. Weather (and the header clock) refresh on the slow 30-minute
-        // cadence (`slow`); S-Bahn + calendar poll every minute.
         let slow = tick.is_multiple_of(WEATHER_EVERY);
-        let mut need_render = tick == 0;
+        let full_refresh = tick == 0 || slow;
+        let mut changed = [false; 6];
         {
             let mut ctx = UpdateCtx {
                 client: &mut client,
@@ -177,19 +177,24 @@ fn main() -> anyhow::Result<()> {
                 &mut sbahn,
                 &mut calendar,
             ];
-            for module in updatables.iter_mut() {
+            for (i, module) in updatables.iter_mut().enumerate() {
                 if module.update(&mut ctx) {
-                    need_render = true;
+                    changed[i] = true;
                 }
             }
         }
 
-        // Refresh the panel only when something actually changed.
-        if need_render {
-            let modules: [&dyn DisplayModule; 6] =
-                [&header, &current, &graph, &daily, &sbahn, &calendar];
+        // Refresh the panel only when something actually changed. The module
+        // array must stay in the same order as `updatables` above so `changed`
+        // lines up index-for-index.
+        let modules: [&dyn DisplayModule; 6] =
+            [&header, &current, &graph, &daily, &sbahn, &calendar];
+        if full_refresh {
             controller.render(&modules);
-            info!("   Frame rendered.");
+            info!("   Full frame rendered.");
+        } else if changed.iter().any(|&c| c) {
+            controller.render_partial(&modules, &changed);
+            info!("   Partial frame rendered.");
         }
 
         tick = tick.wrapping_add(1);

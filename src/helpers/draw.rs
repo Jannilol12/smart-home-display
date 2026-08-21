@@ -1,6 +1,6 @@
 //! Shared drawing + string/date formatting helpers used across the dashboard
 //! modules. Everything here draws in the natural "black on white" convention
-//! (the controller inverts the framebuffer before flushing to the panel).
+//! (the panel uses natural polarity, so the framebuffer is flushed as-is).
 
 use core::convert::Infallible;
 use embedded_graphics::{

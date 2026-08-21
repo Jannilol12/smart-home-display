@@ -11,11 +11,12 @@ anyhow = "1.0"
 serde = { version = "1.0", features = ["derive"] }
 serde_json = "1.0"
 embedded-graphics = "0.8.2"
-# NOTE: Pinned to the upstream fix for the 7.5" V2 panel (PR #228,
-# "Fix Epd7in5_V2 content fading out during DisplayFrame"). The released
-# 0.6.0 ships a wrong PowerSetting voltage that makes the image fade/streak
-# during refresh. Revert to a crates.io version once a release > 0.6.0 exists.
-epd-waveshare = { git = "https://github.com/rust-embedded-community/epd-waveshare.git", rev = "6b27f52e584b04d20ee062ec68d769a57a05e802" }
+# Local fork of epd-waveshare (see vendor/epd-waveshare). It combines upstream
+# PR #249 ("add support for partial refresh and setting LUT epd7in5_v2", which
+# makes set_lut/update_partial_frame real for our panel) with the PowerSetting
+# fade fix from PR #228 that #249 dropped. Local deltas are marked with
+# "LOCAL FORK:" comments in vendor/epd-waveshare/src/epd7in5_v2/mod.rs.
+epd-waveshare = { path = "vendor/epd-waveshare" }
 embedded-hal = "1.0.0"
 
 [build-dependencies]
