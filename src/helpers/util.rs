@@ -31,7 +31,7 @@ pub fn read_body(client: &mut EspHttpConnection) -> anyhow::Result<String> {
             break; // safety cap
         }
     }
-    // Reuse the buffer we already filled: 
+    // Reuse the buffer we already filled:
     Ok(match String::from_utf8(body) {
         Ok(s) => s,
         Err(e) => String::from_utf8_lossy(e.as_bytes()).into_owned(),

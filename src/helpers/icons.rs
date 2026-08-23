@@ -205,7 +205,7 @@ pub fn draw(
 }
 
 /// Draw the falling-precipitation glyphs beneath a cloud. The glyph COUNT still
-/// encodes intensity (light = 2, moderate = 3, heavy = 4). 
+/// encodes intensity (light = 2, moderate = 3, heavy = 4).
 fn precip_glyphs(
     display: &mut Display7in5,
     x: f32,
