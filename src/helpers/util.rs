@@ -31,7 +31,11 @@ pub fn read_body(client: &mut EspHttpConnection) -> anyhow::Result<String> {
             break; // safety cap
         }
     }
-    Ok(String::from_utf8_lossy(&body).into_owned())
+    // Reuse the buffer we already filled: 
+    Ok(match String::from_utf8(body) {
+        Ok(s) => s,
+        Err(e) => String::from_utf8_lossy(e.as_bytes()).into_owned(),
+    })
 }
 
 /// Configure the C library timezone to Europe/Berlin (POSIX TZ with DST rules).

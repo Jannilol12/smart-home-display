@@ -12,9 +12,11 @@ fn main() {
 fn load_secrets() {
     println!("cargo:rerun-if-changed=.secret");
 
-    const KEYS: [&str; 9] = [
+    const KEYS: [&str; 11] = [
         "WIFI_SSID",
         "WIFI_PASSWORD",
+        "WEATHER_LAT",
+        "WEATHER_LON",
         "DB_CLIENT_ID",
         "DB_API_KEY",
         "DB_EVA_NO",

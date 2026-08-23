@@ -31,8 +31,18 @@ use log::info;
 const SSID: &str = env!("SECRET_WIFI_SSID");
 const PASSWORD: &str = env!("SECRET_WIFI_PASSWORD");
 
-// One Open-Meteo request feeds the current-conditions, 24h-graph and 3-day blocks.
-const WEATHER_URL: &str = "https://api.open-meteo.com/v1/forecast?latitude=49.591&longitude=11.0078&current=temperature_2m,relative_humidity_2m,apparent_temperature,weather_code,wind_speed_10m,wind_direction_10m&hourly=temperature_2m,rain,precipitation_probability,weather_code&daily=weather_code,temperature_2m_max,temperature_2m_min,sunrise,sunset,uv_index_max,precipitation_probability_max,sunshine_duration,precipitation_sum&timezone=Europe%2FBerlin&forecast_days=4&wind_speed_unit=kmh";
+// One Open-Meteo request feeds the current-conditions, 24h-graph and 3-day
+// blocks. Coordinates come from the gitignored `.secret` file (see build.rs);
+const WEATHER_URL: &str = concat!(
+    "https://api.open-meteo.com/v1/forecast?latitude=",
+    env!("SECRET_WEATHER_LAT"),
+    "&longitude=",
+    env!("SECRET_WEATHER_LON"),
+    "&current=temperature_2m,relative_humidity_2m,apparent_temperature,weather_code,wind_speed_10m,wind_direction_10m",
+    "&hourly=temperature_2m,rain,precipitation_probability,weather_code",
+    "&daily=weather_code,temperature_2m_max,temperature_2m_min,sunrise,sunset,uv_index_max,precipitation_probability_max,sunshine_duration,precipitation_sum",
+    "&timezone=Europe%2FBerlin&forecast_days=4&wind_speed_unit=kmh"
+);
 
 // DB Timetables API (DB API Marketplace). Credentials + station EVA from `.secret`.
 const SBAHN_STATION: &str = "Erlangen-Bruck";

@@ -75,79 +75,6 @@ impl DeparturesModule {
         util::read_body(client)
     }
 
-    /// Build departure rows from one or more planned-timetable documents
-    /// (`/plan/...`) merged with the changes feed (`/fchg/...`), keeping only
-    /// departures at or after `now` (a `YYMMDDHHMM` timestamp).
-    pub fn load(&mut self, plans: &[&str], changes: &str, now: &str) -> Result<(), ()> {
-        // 1) Delays / cancellations keyed by trip id.
-        let mut change_map: HashMap<String, (Option<String>, bool)> = HashMap::new();
-        for_each_s(changes, |block| {
-            let id = match open_tag(block, "<s").and_then(|t| attr(t, "id")) {
-                Some(v) => v.to_string(),
-                None => return,
-            };
-            if let Some(dp) = open_tag(block, "<dp") {
-                let ct = attr(dp, "ct").map(str::to_string);
-                let cancelled = attr(dp, "cs") == Some("c");
-                change_map.insert(id, (ct, cancelled));
-            }
-        });
-
-        // 2) Planned departures, with changes applied.
-        let mut rows: Vec<Row> = Vec::new();
-        let mut seen: HashSet<String> = HashSet::new();
-        for plan in plans {
-            for_each_s(plan, |block| {
-                let id = match open_tag(block, "<s").and_then(|t| attr(t, "id")) {
-                    Some(v) => v.to_string(),
-                    None => return,
-                };
-                let dp = match open_tag(block, "<dp") {
-                    Some(v) => v,
-                    None => return, // arrival-only stop, no departure here
-                };
-                let pt = match attr(dp, "pt") {
-                    Some(v) => v,
-                    None => return,
-                };
-
-                let (ct, cancelled) = match change_map.get(&id) {
-                    Some((c, x)) => (c.clone(), *x),
-                    None => (None, false),
-                };
-                let effective = ct.clone().unwrap_or_else(|| pt.to_string());
-                if effective.as_str() < now || !seen.insert(id) {
-                    return; // already departed, or a duplicate across hours
-                }
-
-                let line: String = attr(dp, "l").unwrap_or("").split_whitespace().collect();
-                let dest = last_stop(attr(dp, "ppth").unwrap_or(""));
-                let delayed = !cancelled && ct.as_deref().map(|c| c != pt).unwrap_or(false);
-
-                rows.push(Row {
-                    line: if line.is_empty() { "?".into() } else { line },
-                    dest: if dest.is_empty() { "-".into() } else { dest },
-                    planned: hhmm_db(pt),
-                    actual: hhmm_db(&effective),
-                    delayed,
-                    cancelled,
-                    sort_key: effective,
-                });
-            });
-        }
-
-        rows.sort_by(|a, b| a.sort_key.cmp(&b.sort_key));
-        rows.truncate(MAX_ROWS);
-
-        self.rows = rows;
-        self.status = if self.rows.is_empty() {
-            Some("No departures".into())
-        } else {
-            None
-        };
-        Ok(())
-    }
-
     /// A compact fingerprint of the currently displayed board, used to decide
     /// whether the panel actually needs re-rendering.
     pub fn signature(&self) -> String {
@@ -178,6 +105,75 @@ fn for_each_s<F: FnMut(&str)>(xml: &str, mut f: F) {
         f(&after[..end]);
         rest = &after[end..];
     }
+}
+
+/// Parse the live changes feed (`/fchg/...`) into a delay/cancellation map
+/// keyed by trip id. Reducing the bulky XML body to this compact map lets the
+/// caller drop the response before fetching the planned timetables, so only one
+/// large body is ever alive at once.
+fn parse_changes(changes: &str) -> HashMap<String, (Option<String>, bool)> {
+    let mut change_map: HashMap<String, (Option<String>, bool)> = HashMap::new();
+    for_each_s(changes, |block| {
+        let id = match open_tag(block, "<s").and_then(|t| attr(t, "id")) {
+            Some(v) => v.to_string(),
+            None => return,
+        };
+        if let Some(dp) = open_tag(block, "<dp") {
+            let ct = attr(dp, "ct").map(str::to_string);
+            let cancelled = attr(dp, "cs") == Some("c");
+            change_map.insert(id, (ct, cancelled));
+        }
+    });
+    change_map
+}
+
+/// Fold one planned-timetable document (`/plan/...`) into `rows`, applying the
+/// changes in `change_map` and keeping only departures at or after `now` (a
+/// `YYMMDDHHMM` timestamp). `seen` dedups trip ids across the hourly documents.
+fn parse_plan(
+    plan: &str,
+    change_map: &HashMap<String, (Option<String>, bool)>,
+    now: &str,
+    rows: &mut Vec<Row>,
+    seen: &mut HashSet<String>,
+) {
+    for_each_s(plan, |block| {
+        let id = match open_tag(block, "<s").and_then(|t| attr(t, "id")) {
+            Some(v) => v.to_string(),
+            None => return,
+        };
+        let dp = match open_tag(block, "<dp") {
+            Some(v) => v,
+            None => return, // arrival-only stop, no departure here
+        };
+        let pt = match attr(dp, "pt") {
+            Some(v) => v,
+            None => return,
+        };
+
+        let (ct, cancelled) = match change_map.get(&id) {
+            Some((c, x)) => (c.clone(), *x),
+            None => (None, false),
+        };
+        let effective = ct.clone().unwrap_or_else(|| pt.to_string());
+        if effective.as_str() < now || !seen.insert(id) {
+            return; // already departed, or a duplicate across hours
+        }
+
+        let line: String = attr(dp, "l").unwrap_or("").split_whitespace().collect();
+        let dest = last_stop(attr(dp, "ppth").unwrap_or(""));
+        let delayed = !cancelled && ct.as_deref().map(|c| c != pt).unwrap_or(false);
+
+        rows.push(Row {
+            line: if line.is_empty() { "?".into() } else { line },
+            dest: if dest.is_empty() { "-".into() } else { dest },
+            planned: hhmm_db(pt),
+            actual: hhmm_db(&effective),
+            delayed,
+            cancelled,
+            sort_key: effective,
+        });
+    });
 }
 
 /// The opening-tag substring (up to but excluding `>`) that starts with
@@ -222,7 +218,20 @@ impl DisplayModule for DeparturesModule {
         // changes feed. Polled every tick; reports a change only when the board
         // content actually differs.
         let now_stamp = util::db_stamp(&ctx.now);
-        let mut plans: Vec<String> = Vec::new();
+
+        let change_map = match self.db_get(
+            ctx.client,
+            &format!("{}/fchg/{}", self.cfg.base, self.cfg.eva),
+        ) {
+            Ok(body) => parse_changes(&body),
+            Err(e) => {
+                error!("   Changes request failed: {e:?}");
+                HashMap::new()
+            }
+        };
+
+        let mut rows: Vec<Row> = Vec::new();
+        let mut seen: HashSet<String> = HashSet::new();
         for tm in [&ctx.now, &ctx.next_hour] {
             let url = format!(
                 "{}/plan/{}/{}/{}",
@@ -232,26 +241,21 @@ impl DisplayModule for DeparturesModule {
                 util::db_hour(tm)
             );
             match self.db_get(ctx.client, &url) {
-                Ok(body) => plans.push(body),
+                Ok(body) => parse_plan(&body, &change_map, &now_stamp, &mut rows, &mut seen),
                 Err(e) => error!("   Plan request failed: {e:?}"),
             }
         }
-        let changes = match self.db_get(
-            ctx.client,
-            &format!("{}/fchg/{}", self.cfg.base, self.cfg.eva),
-        ) {
-            Ok(body) => body,
-            Err(e) => {
-                error!("   Changes request failed: {e:?}");
-                String::new()
-            }
-        };
-        let plan_refs: Vec<&str> = plans.iter().map(String::as_str).collect();
+
+        rows.sort_by(|a, b| a.sort_key.cmp(&b.sort_key));
+        rows.truncate(MAX_ROWS);
+
         let prev = self.signature();
-        if self.load(&plan_refs, &changes, &now_stamp).is_err() {
-            error!("   Failed to parse departures.");
-            return false;
-        }
+        self.rows = rows;
+        self.status = if self.rows.is_empty() {
+            Some("No departures".into())
+        } else {
+            None
+        };
         self.signature() != prev
     }
 
