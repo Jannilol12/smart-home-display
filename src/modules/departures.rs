@@ -10,25 +10,108 @@ use embedded_graphics::{
     text::{Alignment, Baseline, Text, TextStyleBuilder},
 };
 use epd_waveshare::{color::Color, epd7in5_v2::Display7in5};
-use esp_idf_svc::http::{client::EspHttpConnection, Method};
+use esp_idf_svc::http::Method;
 use log::error;
-
-use std::collections::{HashMap, HashSet};
+use serde::Deserialize;
 
 use super::{DisplayModule, UpdateCtx};
-use crate::helpers::{draw_panel, truncate, util};
+use crate::helpers::util::{self, Schedule};
+use crate::helpers::{draw_panel, truncate};
 
+/// Rows shown on the board.
 const MAX_ROWS: usize = 6;
+/// Departures requested per poll. The spare rows keep the board filled while
+/// departed trains are dropped between polls or during an outage.
+const FETCH_ROWS: usize = 10;
+/// Board time window. The API's default is only 30 minutes and it doesn't
+/// support `entryCount` yet; a wide window capped by
+/// `maxEntriesPerTransportType` amounts to "the next FETCH_ROWS departures",
+/// also in the evening when trains are sparse.
+const WINDOW_SECS: i64 = 3 * 3600;
 
-/// DB Timetables API access, injected at construction from `.secret`.
+/// DB OpenBoards API access (DB API Marketplace), injected at construction
+/// from `.secret`.
 pub struct DbConfig {
+    /// API base URL (without the `/departures` endpoint).
     pub base: String,
+    /// EVA number of the station.
     pub eva: String,
     pub client_id: String,
     pub api_key: String,
 }
 
-// ---- DB Timetables API (XML) ----
+// ---- DB OpenBoards API (JSON) ----
+
+/// Minimal projection of the OpenBoards `/departures` response. Everything
+/// else in the (large) reply is skipped while it is streamed in.
+#[derive(Deserialize, Default)]
+#[serde(default, rename_all = "camelCase")]
+struct Board {
+    departures: Vec<Departure>,
+    /// Shared stop-place table the `evaNumber` references point into.
+    stop_places: Vec<StopPlace>,
+}
+
+#[derive(Deserialize, Default)]
+#[serde(default, rename_all = "camelCase")]
+struct Departure {
+    /// Best known departure time (real-time forecast when available).
+    time: String,
+    /// Scheduled departure time.
+    time_schedule: String,
+    cancelled: bool,
+    journey_info: JourneyInfo,
+    transport: Transport,
+}
+
+#[derive(Deserialize, Default)]
+#[serde(default, rename_all = "camelCase")]
+struct JourneyInfo {
+    destination: Option<StopRef>,
+    /// Set when the train terminates short of its regular destination.
+    differing_destination: Option<StopRef>,
+    journey_cancelled: bool,
+}
+
+#[derive(Deserialize, Default)]
+#[serde(default, rename_all = "camelCase")]
+struct StopRef {
+    eva_number: String,
+}
+
+#[derive(Deserialize, Default)]
+#[serde(default, rename_all = "camelCase")]
+struct Transport {
+    /// e.g. "S 1"; the badge fallback when there is no line name.
+    journey_description: String,
+    line: Option<LineInfo>,
+    direction: Option<Direction>,
+}
+
+#[derive(Deserialize, Default)]
+#[serde(default)]
+struct LineInfo {
+    name: String,
+}
+
+#[derive(Deserialize, Default)]
+#[serde(default)]
+struct Direction {
+    texts: Vec<String>,
+}
+
+#[derive(Deserialize, Default)]
+#[serde(default, rename_all = "camelCase")]
+struct StopPlace {
+    eva_number: String,
+    localized_names: Vec<LocalizedName>,
+}
+
+#[derive(Deserialize, Default)]
+#[serde(default)]
+struct LocalizedName {
+    name: String,
+}
 
 /// A flattened departure ready for rendering, DB-board style.
 struct Row {
@@ -38,17 +121,76 @@ struct Row {
     actual: String,
     delayed: bool,
     cancelled: bool,
-    /// Effective departure timestamp (`YYMMDDHHMM`), used to sort and filter.
-    sort_key: String,
+    /// Best known departure as Unix time, used to drop departed trains.
+    leaves: Option<i64>,
 }
 
-/// Bottom-right block: the next departures for a station, from the DB
-/// Timetables API (planned timetable merged with the changes feed).
+impl Row {
+    fn new(dep: &Departure, stops: &[StopPlace]) -> Self {
+        let info = &dep.journey_info;
+        let stop_name = |stop: &StopRef| {
+            stops
+                .iter()
+                .find(|s| s.eva_number == stop.eva_number)
+                .and_then(|s| s.localized_names.first())
+                .map(|n| n.name.clone())
+        };
+        let dest = info
+            .differing_destination
+            .as_ref()
+            .or(info.destination.as_ref())
+            .and_then(stop_name)
+            .or_else(|| dep.transport.direction.as_ref()?.texts.first().cloned())
+            .unwrap_or_else(|| "-".into());
+
+        let line: String = dep
+            .transport
+            .line
+            .as_ref()
+            .map(|l| l.name.as_str())
+            .filter(|name| !name.is_empty())
+            .unwrap_or(&dep.transport.journey_description)
+            .split_whitespace()
+            .collect();
+
+        let cancelled = dep.cancelled || info.journey_cancelled;
+        let (planned, _) = clock(&dep.time_schedule);
+        let (actual, leaves) = clock(&dep.time);
+        Self {
+            line: if line.is_empty() { "?".into() } else { line },
+            dest,
+            delayed: !cancelled && actual != planned,
+            cancelled,
+            planned,
+            actual,
+            leaves,
+        }
+    }
+}
+
+/// Local `HH:MM` and Unix time of an ISO-8601 timestamp; falls back to the
+/// timestamp's own clock digits if it can't be parsed.
+fn clock(iso: &str) -> (String, Option<i64>) {
+    match util::parse_iso8601(iso) {
+        Some(t) => {
+            let tm = util::local_tm(t);
+            (format!("{:02}:{:02}", tm.tm_hour, tm.tm_min), Some(t))
+        }
+        None => (iso.get(11..16).unwrap_or("--:--").to_string(), None),
+    }
+}
+
+/// Bottom-right block: the next departures for a station, live from the DB
+/// OpenBoards API (timetable and real-time forecast in a single request).
 pub struct DeparturesModule {
     bounds: Rectangle,
     station_name: &'static str,
     cfg: DbConfig,
+    schedule: Schedule,
     rows: Vec<Row>,
+    /// The rows reflect a successful fetch on the current connection. When
+    /// false (offline / API failing) the last rows are kept but flagged.
+    live: bool,
     status: Option<String>,
 }
 
@@ -58,21 +200,44 @@ impl DeparturesModule {
             bounds,
             station_name,
             cfg,
+            schedule: Schedule::default(),
             rows: Vec::new(),
+            live: true,
             status: Some("Loading...".into()),
         }
     }
 
-    /// GET against the DB Timetables API (XML body, credentialed headers).
-    fn db_get(&self, client: &mut EspHttpConnection, url: &str) -> anyhow::Result<String> {
+    /// POST a board request for the departures in the next `WINDOW_SECS`
+    /// from `now` (Unix time) and reduce the reply to rows.
+    fn fetch(&self, now: i64) -> anyhow::Result<Vec<Row>> {
+        let body = serde_json::json!({
+            "stopPlaceOrStation": { "evaNumbers": [self.cfg.eva] },
+            "timeWindow": {
+                "timeStart": util::rfc3339_utc(now),
+                "timeEnd": util::rfc3339_utc(now + WINDOW_SECS),
+            },
+            "maxEntriesPerTransportType": FETCH_ROWS,
+            "maxViaStops": 0,
+            "languages": ["deu"],
+        })
+        .to_string();
         let headers = [
             ("DB-Client-Id", self.cfg.client_id.as_str()),
             ("DB-Api-Key", self.cfg.api_key.as_str()),
-            ("Accept", "application/xml"),
+            ("Content-Type", "application/json"),
+            ("Accept", "*/*"),
         ];
-        client.initiate_request(Method::Get, url, &headers)?;
-        client.initiate_response()?;
-        util::read_body(client)
+        let url = format!("{}/departures", self.cfg.base);
+        let board: Board =
+            util::fetch_json(Method::Post, &url, &headers, Some(body.as_bytes()))?;
+
+        let mut rows: Vec<Row> = board
+            .departures
+            .iter()
+            .map(|dep| Row::new(dep, &board.stop_places))
+            .collect();
+        rows.truncate(FETCH_ROWS);
+        Ok(rows)
     }
 
     /// A compact fingerprint of the currently displayed board, used to decide
@@ -83,128 +248,16 @@ impl DeparturesModule {
             None => self
                 .rows
                 .iter()
+                .take(MAX_ROWS)
                 .map(|r| {
                     format!(
                         "{}|{}|{}|{}|{}{};",
                         r.line, r.dest, r.planned, r.actual, r.delayed as u8, r.cancelled as u8
                     )
                 })
+                .chain([format!("live={}", self.live)])
                 .collect(),
         }
-    }
-}
-
-// ---- minimal XML attribute scanning (no external XML dependency) ----
-
-/// Invoke `f` for every `<s>...</s>` trip element in the document.
-fn for_each_s<F: FnMut(&str)>(xml: &str, mut f: F) {
-    let mut rest = xml;
-    while let Some(start) = rest.find("<s ") {
-        let after = &rest[start..];
-        let end = after.find("</s>").map(|e| e + 4).unwrap_or(after.len());
-        f(&after[..end]);
-        rest = &after[end..];
-    }
-}
-
-/// Parse the live changes feed (`/fchg/...`) into a delay/cancellation map
-/// keyed by trip id. Reducing the bulky XML body to this compact map lets the
-/// caller drop the response before fetching the planned timetables, so only one
-/// large body is ever alive at once.
-fn parse_changes(changes: &str) -> HashMap<String, (Option<String>, bool)> {
-    let mut change_map: HashMap<String, (Option<String>, bool)> = HashMap::new();
-    for_each_s(changes, |block| {
-        let id = match open_tag(block, "<s").and_then(|t| attr(t, "id")) {
-            Some(v) => v.to_string(),
-            None => return,
-        };
-        if let Some(dp) = open_tag(block, "<dp") {
-            let ct = attr(dp, "ct").map(str::to_string);
-            let cancelled = attr(dp, "cs") == Some("c");
-            change_map.insert(id, (ct, cancelled));
-        }
-    });
-    change_map
-}
-
-/// Fold one planned-timetable document (`/plan/...`) into `rows`, applying the
-/// changes in `change_map` and keeping only departures at or after `now` (a
-/// `YYMMDDHHMM` timestamp). `seen` dedups trip ids across the hourly documents.
-fn parse_plan(
-    plan: &str,
-    change_map: &HashMap<String, (Option<String>, bool)>,
-    now: &str,
-    rows: &mut Vec<Row>,
-    seen: &mut HashSet<String>,
-) {
-    for_each_s(plan, |block| {
-        let id = match open_tag(block, "<s").and_then(|t| attr(t, "id")) {
-            Some(v) => v.to_string(),
-            None => return,
-        };
-        let dp = match open_tag(block, "<dp") {
-            Some(v) => v,
-            None => return, // arrival-only stop, no departure here
-        };
-        let pt = match attr(dp, "pt") {
-            Some(v) => v,
-            None => return,
-        };
-
-        let (ct, cancelled) = match change_map.get(&id) {
-            Some((c, x)) => (c.clone(), *x),
-            None => (None, false),
-        };
-        let effective = ct.clone().unwrap_or_else(|| pt.to_string());
-        if effective.as_str() < now || !seen.insert(id) {
-            return; // already departed, or a duplicate across hours
-        }
-
-        let line: String = attr(dp, "l").unwrap_or("").split_whitespace().collect();
-        let dest = last_stop(attr(dp, "ppth").unwrap_or(""));
-        let delayed = !cancelled && ct.as_deref().map(|c| c != pt).unwrap_or(false);
-
-        rows.push(Row {
-            line: if line.is_empty() { "?".into() } else { line },
-            dest: if dest.is_empty() { "-".into() } else { dest },
-            planned: hhmm_db(pt),
-            actual: hhmm_db(&effective),
-            delayed,
-            cancelled,
-            sort_key: effective,
-        });
-    });
-}
-
-/// The opening-tag substring (up to but excluding `>`) that starts with
-/// `prefix` (e.g. `"<dp"`), or `None` if absent.
-fn open_tag<'a>(block: &'a str, prefix: &str) -> Option<&'a str> {
-    let start = block.find(prefix)?;
-    let rest = &block[start..];
-    let end = rest.find('>')?;
-    Some(&rest[..end])
-}
-
-/// Read a double-quoted attribute value from a single opening tag.
-fn attr<'a>(tag: &'a str, name: &str) -> Option<&'a str> {
-    let needle = format!(" {name}=\"");
-    let start = tag.find(&needle)? + needle.len();
-    let rest = &tag[start..];
-    let end = rest.find('"')?;
-    Some(&rest[..end])
-}
-
-/// Final destination = last entry of a `|`-separated path list (`ppth`).
-fn last_stop(ppth: &str) -> String {
-    ppth.rsplit('|').next().unwrap_or("").trim().to_string()
-}
-
-/// `HH:MM` from a DB timestamp `YYMMDDHHMM` (e.g. `2608201632` -> `16:32`).
-fn hhmm_db(stamp: &str) -> String {
-    if stamp.len() >= 10 {
-        format!("{}:{}", &stamp[6..8], &stamp[8..10])
-    } else {
-        "--:--".to_string()
     }
 }
 
@@ -214,53 +267,45 @@ impl DisplayModule for DeparturesModule {
     }
 
     fn update(&mut self, ctx: &mut UpdateCtx) -> bool {
-        // Planned timetable for the current and next hour, merged with the live
-        // changes feed. Polled every tick; reports a change only when the board
-        // content actually differs.
-        let now_stamp = util::db_stamp(&ctx.now);
-
-        let change_map = match self.db_get(
-            ctx.client,
-            &format!("{}/fchg/{}", self.cfg.base, self.cfg.eva),
-        ) {
-            Ok(body) => parse_changes(&body),
-            Err(e) => {
-                error!("   Changes request failed: {e:?}");
-                HashMap::new()
-            }
-        };
-
-        let mut rows: Vec<Row> = Vec::new();
-        let mut seen: HashSet<String> = HashSet::new();
-        for tm in [&ctx.now, &ctx.next_hour] {
-            let url = format!(
-                "{}/plan/{}/{}/{}",
-                self.cfg.base,
-                self.cfg.eva,
-                util::db_date(tm),
-                util::db_hour(tm)
-            );
-            match self.db_get(ctx.client, &url) {
-                Ok(body) => parse_plan(&body, &change_map, &now_stamp, &mut rows, &mut seen),
-                Err(e) => error!("   Plan request failed: {e:?}"),
+        // Live board: polled every tick; failures back off (see `Schedule`)
+        // and keep the last rows on screen, flagged as not live. The time
+        // window needs the real clock, so wait for SNTP.
+        let before = self.signature();
+        self.schedule.request();
+        if ctx.online() && ctx.time_valid && self.schedule.due() {
+            match self.fetch(util::unix_now()) {
+                Ok(rows) => {
+                    self.schedule.succeeded();
+                    self.rows = rows;
+                }
+                Err(e) => {
+                    error!("   Departures request failed: {e:#}");
+                    self.schedule.failed();
+                }
             }
         }
+        self.live = ctx.online() && ctx.time_valid && !self.schedule.failing();
 
-        rows.sort_by(|a, b| a.sort_key.cmp(&b.sort_key));
-        rows.truncate(MAX_ROWS);
+        // Live or stale, never show trains that have already left.
+        if ctx.time_valid {
+            let now = util::unix_now();
+            self.rows.retain(|r| r.leaves.is_none_or(|t| t >= now));
+        }
 
-        let prev = self.signature();
-        self.rows = rows;
-        self.status = if self.rows.is_empty() {
-            Some("No departures".into())
-        } else {
-            None
+        self.status = match (self.rows.is_empty(), self.live) {
+            (false, _) => None,
+            (true, true) => Some("No departures".into()),
+            (true, false) => Some("No live data".into()),
         };
-        self.signature() != prev
+        self.signature() != before
     }
 
     fn render(&self, display: &mut Display7in5) -> Result<(), Infallible> {
-        let title = format!("S-BAHN - {}", self.station_name);
+        let title = if self.live {
+            format!("S-BAHN - {}", self.station_name)
+        } else {
+            format!("S-BAHN - {}  (not live)", self.station_name)
+        };
         let inner = draw_panel(display, self.bounds, &title)?;
         let ix = inner.top_left.x;
         let iy = inner.top_left.y;
@@ -297,7 +342,7 @@ impl DisplayModule for DeparturesModule {
         let bh: u32 = 18;
         let time_w = 5 * CW; // width of "HH:MM"
 
-        for (i, row) in self.rows.iter().enumerate() {
+        for (i, row) in self.rows.iter().take(MAX_ROWS).enumerate() {
             let ytop = iy + 2 + i as i32 * rh;
             let vmid = ytop + bh as i32 / 2;
 

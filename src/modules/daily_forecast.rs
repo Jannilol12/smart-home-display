@@ -14,6 +14,7 @@ use epd_waveshare::{color::Color, epd7in5_v2::Display7in5};
 
 use super::{pull_weather, DisplayModule, UpdateCtx};
 use crate::helpers::icons::{self, IconKind};
+use crate::helpers::util::Schedule;
 use crate::helpers::weather_data::WeatherData;
 use crate::helpers::{draw_panel, glyphs, weekday};
 
@@ -21,6 +22,7 @@ use crate::helpers::{draw_panel, glyphs, weekday};
 pub struct DailyForecastModule {
     bounds: Rectangle,
     url: String,
+    schedule: Schedule,
     data: Option<Rc<WeatherData>>,
 }
 
@@ -29,6 +31,7 @@ impl DailyForecastModule {
         Self {
             bounds,
             url,
+            schedule: Schedule::default(),
             data: None,
         }
     }
@@ -40,7 +43,7 @@ impl DisplayModule for DailyForecastModule {
     }
 
     fn update(&mut self, ctx: &mut UpdateCtx) -> bool {
-        match pull_weather(ctx, &self.url) {
+        match pull_weather(ctx, &self.url, &mut self.schedule) {
             Some(wd) => {
                 self.data = Some(wd);
                 true

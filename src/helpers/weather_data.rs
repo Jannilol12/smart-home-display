@@ -1,4 +1,4 @@
-use esp_idf_svc::http::client::EspHttpConnection;
+use esp_idf_svc::http::Method;
 use serde::Deserialize;
 
 /// Instantaneous "current" block from Open-Meteo.
@@ -75,15 +75,10 @@ pub struct WeatherData {
 }
 
 impl WeatherData {
-    /// Fetch the Open-Meteo forecast and parse it in one shot. One request
-    /// feeds the current-conditions, 24h-graph and 3-day modules.
-    pub fn fetch(client: &mut EspHttpConnection, url: &str) -> anyhow::Result<Self> {
-        let body = super::util::http_get(client, url)?;
-        Self::parse(&body).map_err(|_| anyhow::anyhow!("failed to parse weather JSON"))
-    }
-
-    pub fn parse(json: &str) -> Result<Self, ()> {
-        serde_json::from_str::<WeatherData>(json).map_err(|_| ())
+    /// Fetch and parse the Open-Meteo forecast in one shot. One request feeds
+    /// the current-conditions, 24h-graph and 3-day modules.
+    pub fn fetch(url: &str) -> anyhow::Result<Self> {
+        super::util::fetch_json(Method::Get, url, &[("Accept", "application/json")], None)
     }
 
     /// Index into the hourly arrays that corresponds to the current hour, found

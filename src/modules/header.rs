@@ -13,12 +13,14 @@ use epd_waveshare::{color::Color, epd7in5_v2::Display7in5};
 use super::{DisplayModule, UpdateCtx};
 use crate::helpers::util;
 
-/// Top bar showing the current date, time and the device IP address.
+/// Top bar showing the current date, time and the device IP address (or
+/// OFFLINE while Wi-Fi is down).
 pub struct HeaderModule {
     bounds: Rectangle,
     date: String,
     time: String,
-    ip: String,
+    /// "IP a.b.c.d" or "OFFLINE".
+    net: String,
 }
 
 impl HeaderModule {
@@ -27,17 +29,8 @@ impl HeaderModule {
             bounds,
             date: String::from("--"),
             time: String::from("--:--"),
-            ip: String::from("0.0.0.0"),
+            net: String::new(),
         }
-    }
-
-    pub fn set_datetime(&mut self, date: String, time: String) {
-        self.date = date;
-        self.time = time;
-    }
-
-    pub fn set_ip(&mut self, ip: String) {
-        self.ip = ip;
     }
 }
 
@@ -46,10 +39,21 @@ impl DisplayModule for HeaderModule {
         self.bounds
     }
 
-    fn update(&mut self, _ctx: &mut UpdateCtx) -> bool {
-        let (date, time) = util::local_datetime();
-        let changed = time != self.time || date != self.date;
-        self.set_datetime(date, time);
+    fn update(&mut self, ctx: &mut UpdateCtx) -> bool {
+        // Until SNTP has set the clock it reads 1970: show placeholders.
+        let (date, time) = if ctx.time_valid {
+            util::local_datetime()
+        } else {
+            ("--".to_string(), "--:--".to_string())
+        };
+        let net = match &ctx.ip {
+            Some(ip) => format!("IP {ip}"),
+            None => "OFFLINE".to_string(),
+        };
+        let changed = time != self.time || date != self.date || net != self.net;
+        self.date = date;
+        self.time = time;
+        self.net = net;
         changed
     }
 
@@ -85,7 +89,7 @@ impl DisplayModule for HeaderModule {
         Text::with_text_style(&self.time, Point::new(tl.x + w / 2, mid_y), big, center)
             .draw(display)?;
         Text::with_text_style(
-            &format!("IP {}", self.ip),
+            &self.net,
             Point::new(tl.x + w - 10, mid_y + 2),
             ip_style,
             right,

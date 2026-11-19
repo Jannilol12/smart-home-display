@@ -11,6 +11,7 @@ use epd_waveshare::{color::Color, epd7in5_v2::Display7in5};
 
 use super::{pull_weather, DisplayModule, UpdateCtx};
 use crate::helpers::draw_panel;
+use crate::helpers::util::Schedule;
 use crate::helpers::weather_data::WeatherData;
 
 /// Top-right block: a compact 24-hour chart combining the temperature trend
@@ -18,6 +19,7 @@ use crate::helpers::weather_data::WeatherData;
 pub struct ForecastGraphModule {
     bounds: Rectangle,
     url: String,
+    schedule: Schedule,
     data: Option<Rc<WeatherData>>,
 }
 
@@ -26,6 +28,7 @@ impl ForecastGraphModule {
         Self {
             bounds,
             url,
+            schedule: Schedule::default(),
             data: None,
         }
     }
@@ -37,7 +40,7 @@ impl DisplayModule for ForecastGraphModule {
     }
 
     fn update(&mut self, ctx: &mut UpdateCtx) -> bool {
-        match pull_weather(ctx, &self.url) {
+        match pull_weather(ctx, &self.url, &mut self.schedule) {
             Some(wd) => {
                 self.data = Some(wd);
                 true
@@ -140,8 +143,11 @@ impl DisplayModule for ForecastGraphModule {
         // Left axis = probability %, right axis = rain amount; both peak at the
         // separator line (= 100% and the window's max mm).
         let prec_h = (prec_bot - sep) as f32;
-        let rain_max = rains[start..start + n]
+        // `rains` may be shorter than `temps` (missing series): never slice it.
+        let rain_max = rains
             .iter()
+            .skip(start)
+            .take(n)
             .cloned()
             .fold(0.0_f32, f32::max);
         let rain_scale = rain_max.max(0.5);

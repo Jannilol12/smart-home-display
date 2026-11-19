@@ -81,7 +81,12 @@ pub fn month_abbr(m: usize) -> &'static str {
 pub fn weekday(date: &str) -> &'static str {
     const WD: [&str; 7] = ["Sun", "Mon", "Tue", "Wed", "Thu", "Fri", "Sat"];
     let y: i32 = date.get(0..4).and_then(|s| s.parse().ok()).unwrap_or(2000);
-    let m: usize = date.get(5..7).and_then(|s| s.parse().ok()).unwrap_or(1);
+    // Clamped: a malformed month ("00", "13") would index out of bounds below.
+    let m: usize = date
+        .get(5..7)
+        .and_then(|s| s.parse().ok())
+        .unwrap_or(1)
+        .clamp(1, 12);
     let d: i32 = date.get(8..10).and_then(|s| s.parse().ok()).unwrap_or(1);
     const T: [i32; 12] = [0, 3, 2, 5, 0, 3, 5, 1, 4, 6, 2, 4];
     let yy = if m < 3 { y - 1 } else { y };

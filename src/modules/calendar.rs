@@ -1,4 +1,5 @@
 use core::convert::Infallible;
+use std::time::{Duration, Instant};
 
 use embedded_graphics::{
     mono_font::{
@@ -10,14 +11,17 @@ use embedded_graphics::{
     text::{Baseline, Text, TextStyleBuilder},
 };
 use epd_waveshare::{color::Color, epd7in5_v2::Display7in5};
-use esp_idf_svc::http::{client::EspHttpConnection, Method};
+use esp_idf_svc::http::Method;
 use log::error;
 use serde::Deserialize;
 
 use super::{DisplayModule, UpdateCtx};
-use crate::helpers::{draw_panel, month_abbr, truncate, util, weekday};
+use crate::helpers::util::{self, Schedule};
+use crate::helpers::{draw_panel, month_abbr, truncate, weekday};
 
 const MAX_EVENTS: usize = 5;
+/// Google access tokens live ~1 h; re-mint well before that.
+const TOKEN_MAX_AGE: Duration = Duration::from_secs(45 * 60);
 
 /// Google Calendar OAuth access (installed-app flow), injected at construction
 /// from `.secret`. An empty `refresh_token` disables the calendar block.
@@ -38,8 +42,9 @@ struct CalEvent {
 pub struct CalendarModule {
     bounds: Rectangle,
     cfg: GcalConfig,
-    /// Cached OAuth access token, minted on the slow cadence and reused.
-    token: Option<String>,
+    /// Cached OAuth access token and when it was minted.
+    token: Option<(String, Instant)>,
+    schedule: Schedule,
     events: Vec<CalEvent>,
     status: String,
 }
@@ -82,6 +87,7 @@ impl CalendarModule {
             bounds,
             cfg,
             token: None,
+            schedule: Schedule::default(),
             events: Vec::new(),
             status,
         }
@@ -89,33 +95,27 @@ impl CalendarModule {
 
     /// Refresh a short-lived OAuth access token from the stored refresh token
     /// (installed-app / desktop flow).
-    fn access_token(&self, client: &mut EspHttpConnection) -> anyhow::Result<String> {
+    fn access_token(&self) -> anyhow::Result<String> {
         let body = format!(
             "client_id={}&client_secret={}&refresh_token={}&grant_type=refresh_token",
             self.cfg.client_id, self.cfg.client_secret, self.cfg.refresh_token
         );
-        let len = body.len().to_string();
         let headers = [
             ("Content-Type", "application/x-www-form-urlencoded"),
-            ("Content-Length", len.as_str()),
             ("Accept", "application/json"),
         ];
-        client.initiate_request(
-            Method::Post,
-            "https://oauth2.googleapis.com/token",
-            &headers,
-        )?;
-        client.write_all(body.as_bytes())?;
-        client.initiate_response()?;
-        let resp = util::read_body(client)?;
 
         #[derive(Deserialize)]
         struct Token {
             #[serde(default)]
             access_token: String,
         }
-        let token: Token = serde_json::from_str(&resp)
-            .map_err(|e| anyhow::anyhow!("token response parse failed: {e}"))?;
+        let token: Token = util::fetch_json(
+            Method::Post,
+            "https://oauth2.googleapis.com/token",
+            &headers,
+            Some(body.as_bytes()),
+        )?;
         if token.access_token.is_empty() {
             anyhow::bail!("no access_token in token response");
         }
@@ -124,12 +124,7 @@ impl CalendarModule {
 
     /// Fetch upcoming events for the configured calendar starting at `time_min`
     /// (RFC3339 UTC).
-    fn events(
-        &self,
-        client: &mut EspHttpConnection,
-        token: &str,
-        time_min: &str,
-    ) -> anyhow::Result<String> {
+    fn events(&self, token: &str, time_min: &str) -> anyhow::Result<EventsResponse> {
         let cal_id = if self.cfg.calendar_id.is_empty() {
             "primary".to_string()
         } else {
@@ -143,15 +138,25 @@ impl CalendarModule {
             ("Authorization", auth.as_str()),
             ("Accept", "application/json"),
         ];
-        client.initiate_request(Method::Get, &url, &headers)?;
-        client.initiate_response()?;
-        util::read_body(client)
+        util::fetch_json(Method::Get, &url, &headers, None)
     }
 
-    /// Parse a Google Calendar events JSON body into renderable rows. `today`
+    /// Upcoming events. The OAuth token (valid ~1 h) is reused until
+    /// `TOKEN_MAX_AGE`, and only kept while it works, so any failure re-mints
+    /// it on the next attempt.
+    fn fetch(&mut self) -> anyhow::Result<EventsResponse> {
+        let token = match self.token.take() {
+            Some((t, minted)) if minted.elapsed() < TOKEN_MAX_AGE => (t, minted),
+            _ => (self.access_token()?, Instant::now()),
+        };
+        let resp = self.events(&token.0, &util::rfc3339_utc(util::unix_now()))?;
+        self.token = Some(token);
+        Ok(resp)
+    }
+
+    /// Turn a Google Calendar events response into renderable rows. `today`
     /// is the local `YYYY-MM-DD` date, used to decide when to show a month.
-    pub fn load(&mut self, json: &str, today: &str) -> Result<(), ()> {
-        let resp: EventsResponse = serde_json::from_str(json).map_err(|_| ())?;
+    fn load(&mut self, resp: EventsResponse, today: &str) {
         self.events.clear();
         for ev in resp.items.into_iter().take(MAX_EVENTS) {
             let title = ev.summary.unwrap_or_else(|| "(no title)".to_string());
@@ -178,13 +183,6 @@ impl CalendarModule {
         } else {
             String::new()
         };
-        Ok(())
-    }
-
-    /// Show a short status line instead of events (e.g. when unconfigured).
-    pub fn set_status(&mut self, status: &str) {
-        self.events.clear();
-        self.status = status.to_string();
     }
 
     /// A compact fingerprint of the current calendar content, used to decide
@@ -209,31 +207,23 @@ impl DisplayModule for CalendarModule {
         if self.cfg.refresh_token.is_empty() {
             return false; // unconfigured: keep the static status set at construction
         }
-        // The OAuth token is minted on the slow cadence and reused (valid ~1h);
-        // a failed events call drops it so it is re-minted on the next poll.
-        if ctx.slow || self.token.is_none() {
-            match self.access_token(ctx.client) {
-                Ok(t) => self.token = Some(t),
-                Err(e) => {
-                    error!("   Calendar auth failed: {e:?}");
-                    self.set_status("Calendar auth failed");
-                }
-            }
+        // Polled every tick; failures back off (see `Schedule`) and keep the
+        // last events on screen. Needs the real clock for `timeMin`.
+        self.schedule.request();
+        if !ctx.online() || !ctx.time_valid || !self.schedule.due() {
+            return false;
         }
         let prev = self.signature();
-        if let Some(token) = self.token.take() {
-            let time_min = util::rfc3339_utc_now();
-            match self.events(ctx.client, &token, &time_min) {
-                Ok(body) => {
-                    self.token = Some(token);
-                    if self.load(&body, &util::ymd(&ctx.now)).is_err() {
-                        error!("   Failed to parse calendar events.");
-                        self.set_status("Calendar parse error");
-                    }
-                }
-                Err(e) => {
-                    error!("   Calendar events request failed: {e:?}");
-                    self.set_status("Calendar unavailable");
+        match self.fetch() {
+            Ok(resp) => {
+                self.schedule.succeeded();
+                self.load(resp, &util::ymd(&ctx.now));
+            }
+            Err(e) => {
+                error!("   Calendar request failed: {e:#}");
+                self.schedule.failed();
+                if self.events.is_empty() {
+                    self.status = "Calendar unavailable".to_string();
                 }
             }
         }
